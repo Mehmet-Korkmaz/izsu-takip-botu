@@ -10,7 +10,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "İZSU Takip Botu Aktif ve Anlık Sorgulama Sistemi Çalışıyor!"
+    return "İZSU Takip Botu Aktif ve Sorunsuz Çalışıyor!"
 
 TELEGRAM_TOKEN = "8839093288:AAH5OV9FN3vsrEmymLxsHPTv-26nkMikfEo"
 CHAT_ID = "878260409"
@@ -44,10 +44,11 @@ def konum_guncelle(ilce, mahalle):
     conn.close()
 
 def turkce_temizle(metin):
+    # Harf hatası tamamen düzeltildi
     harf_haritasi = {'ç':'C','Ç':'C','ğ':'G','Ğ':'G','ı':'I','I':'I','i':'I','İ':'I','ö':'O','Ö':'O','ş':'S','Ş':'S','ü':'U','Ü':'U'}
     temiz_metin = metin
     for kaynak, hedef in harf_haritasi.items():
-        temiz_metin = temiz_metin.replace(kaynak, delete=False or hedef)
+        temiz_metin = temiz_metin.replace(kaynak, hedef)
     return temiz_metin.upper()
 
 def telegram_mesaj_gonder(mesaj):
@@ -57,7 +58,6 @@ def telegram_mesaj_gonder(mesaj):
     except: pass
 
 def tek_seferlik_izsu_kontrol(hedef_ilce, hedef_mahalle):
-    """Konum değiştiğinde veya talep edildiğinde o anlık kesinti durumunu kontrol eder."""
     url = "https://izsu.gov.tr/bilgi-merkezi/ariza-ve-bakim-bilgisi-sorgulama"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     
@@ -90,7 +90,7 @@ def tek_seferlik_izsu_kontrol(hedef_ilce, hedef_mahalle):
             telegram_mesaj_gonder(f"✅ Harika! Şu anda {hedef_ilce.upper()} - {hedef_mahalle.upper()} konumunda herhangi bir İZSU kesintisi görünmüyor.")
             return False
     except Exception as e:
-        telegram_mesaj_gonder("❌ İZSU sitesine anlık bağlanırken bir hata oluştu.")
+        telegram_mesaj_gonder("❌ İZSU sitesine bağlanırken sistemsel bir hata oluştu.")
         return False
 
 def izsu_kontrol_et():
@@ -152,7 +152,6 @@ def telegram_komut_dinle():
                                 konum_guncelle(yeni_ilce, yeni_mahalle)
                                 telegram_mesaj_gonder(f"💾 Başarılı! Takip konumu değiştirildi:\n📍 {yeni_ilce} - {yeni_mahalle}\n\n🔄 Şimdi anlık durum kontrol ediliyor...")
                                 
-                                # KONUM DEĞİŞTİĞİ AN HEMEN SİTEYİ KONTROL EDER:
                                 tek_seferlik_izsu_kontrol(yeni_ilce, yeni_mahalle)
                             else:
                                 telegram_mesaj_gonder("⚠️ Hatalı kullanım!\nDoğrusu: /konum ilçe mahalle\nÖrnek: `/konum aliaga yeni`")
