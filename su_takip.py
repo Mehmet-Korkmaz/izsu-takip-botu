@@ -12,7 +12,7 @@ TELEGRAM_TOKEN = "8839093288:AAH5OV9FN3vsrEmymLxsHPTv-26nkMikfEo"
 DB_DOSYASI = "hafiza.db"
 KONTROL_ARALIGI = 3600  # 1 Saat
 
-# İzmir'in tüm ilçeleri (Kullanıcı komutsuz sadece ilçe adı yazarsa yakalamak için)
+# İzmir'in tüm ilçeleri (Sadece ilçe adı yazıldığında otomatik algılamak için)
 IZMIR_ILCELERI = [
     "ALİAĞA", "BALÇOVA", "BAYINDIR", "BAYRAKLI", "BERGAMA", "BEYDAĞ", "BORNOVA", "BUCA",
     "ÇEŞME", "ÇİĞLİ", "DİKİLİ", "FOÇA", "GAZİEMİR", "GÜZELBAHÇE", "KARABAĞLAR", "KARABURUN",
@@ -22,7 +22,7 @@ IZMIR_ILCELERI = [
 
 @app.route('/')
 def home():
-    return "İZSU Gelişmiş Webhook Takip Botu Aktif!"
+    return "İZSU Akıllı Webhook Botu Aktif!"
 
 @app.route('/webhook', methods=['POST'])
 def telegram_webhook():
@@ -139,14 +139,22 @@ def tek_seferlik_izsu_kontrol(chat_id, hedef_ilce, hedef_mahalle):
         telegram_mesaj_gonder(chat_id, "❌ İZSU sitesine bağlanırken bir hata oluştu.")
 
 def telegram_mesaj_isle(chat_id, metin):
-    # Mesaj kutusunun altında duracak pratik butonlar
+    # Ekranın altındaki pratik butonlarımız
     klavye_butonlari = {
         "keyboard": [
             [{"text": "🔎 Konumumu Sorgula"}, {"text": "❓ Nasıl Kullanılır?"}]
         ],
-        "resize_keyboard": True, # Butonların boyutu kibar dursun
-        "one_time_keyboard": False # Sürekli orada kalsınlar
+        "resize_keyboard": True,
+        "one_time_keyboard": False
     }
+
+    # Kullanıcı sadece "aliağa siteler" gibi düz metin yazdıysa, ilk kelimeyi kontrol et:
+    parcalar = metin.split(" ")
+    ilk_kelime = turkce_temizle(parcalar[0])
+
+    # 🌟 EĞER BAŞINDA "/" YOKSA VE İLK KELİME BİR İLÇEYSE, OTOMATİK OLARAK /konum GİBİ DAVRAN:
+    if not metin.startswith("/") and ilk_kelime in IZMIR_ILCELERI:
+        metin = f"/konum {metin}"
 
     metin_temiz = turkce_temizle(metin)
 
@@ -155,14 +163,11 @@ def telegram_mesaj_isle(chat_id, metin):
         
         hosgeldin_mesaji = (
             "👋 *İZSU Takip Botuna Hoş Geldiniz!*\n\n"
-            "✍️ *Kullanım Şekilleri:*\n\n"
-            "1️⃣ *Sadece İlçe Takibi İçin:*\n"
-            "`/konum` yazıp boşluk bırakarak sadece ilçenizi ekleyin.\n"
-            "_(Örnek: `/konum aliağa` )_\n\n"
-            "2️⃣ *Nokta Atışı Mahalle Takibi İçin:*\n"
-            "`/konum` yazıp boşluk bırakarak ilçe ve mahalle ekleyin.\n"
-            "_(Örnek: `/konum aliağa siteler` )_\n\n"
-            "🔎 Durumu sorgulamak için aşağıdaki butona basabilir veya direkt `/neresi` yazabilirsiniz."
+            "✍️ *Konum Ayarlamak Çok Kolay:*\n\n"
+            "Artık hiçbir komut yazmanıza gerek yok! Doğrudan takip etmek istediğiniz konumu yazıp gönderin.\n\n"
+            "👉 *Örnek 1 (Sadece İlçe):* `buca`\n"
+            "👉 *Örnek 2 (İlçe ve Mahalle):* `aliağa siteler`\n\n"
+            "🔎 Mevcut takip konumunuzu kontrol etmek için aşağıdaki **🔎 Konumumu Sorgula** butonuna basmanız yeterli!"
         )
         
         sonuc = telegram_mesaj_gonder(chat_id, hosgeldin_mesaji, reply_markup=klavye_butonlari)
@@ -184,7 +189,7 @@ def telegram_mesaj_isle(chat_id, metin):
             telegram_mesaj_gonder(chat_id, f"💾 Başarılı! Takip konumunuz kaydedildi:\n📍 {yeni_ilce} - {yeni_mahalle}\n\n🔄 Şimdi anlık durum kontrol ediliyor...", reply_markup=klavye_butonlari)
             tek_seferlik_izsu_kontrol(chat_id, yeni_ilce, yeni_mahalle)
         else:
-            telegram_mesaj_gonder(chat_id, "⚠️ Hatalı kullanım!\nDoğrusu: `/konum ilçe` veya `/konum ilçe mahalle`\nÖrnek: `/konum aliağa siteler`", reply_markup=klavye_butonlari)
+            telegram_mesaj_gonder(chat_id, "⚠️ Hatalı kullanım!\nLütfen sadece takip etmek istediğiniz konumu yazın.\nÖrnek: `buca` ya da `aliağa siteler`", reply_markup=klavye_butonlari)
 
     elif metin == "/neresi" or metin == "🔎 Konumumu Sorgula":
         ilce, mah = kullanıcı_oku(chat_id)
@@ -192,26 +197,18 @@ def telegram_mesaj_isle(chat_id, metin):
         telegram_mesaj_gonder(chat_id, f"🔎 Şu an takip ettiğiniz konum:\n📍 {ilce} - {mah_str}\n\n🔄 Şimdi anlık durum kontrol ediliyor...", reply_markup=klavye_butonlari)
         tek_seferlik_izsu_kontrol(chat_id, ilce, mah)
 
-    # 🌟 1. EKLEME: Selamlaşma ve Teşekkür Algılayıcı
     elif metin_temiz in ["SELAM", "MERHABA", "SLM", "MRB", "SA", "AS"]:
-        telegram_mesaj_gonder(chat_id, "👋 Merhaba! Size nasıl yardımcı olabilirim? Takip konumunuzu sorgulamak için aşağıdaki butonları kullanabilirsiniz.", reply_markup=klavye_butonlari)
+        telegram_mesaj_gonder(chat_id, "👋 Merhaba! Konumunuzu değiştirmek için doğrudan ilçe veya mahalle adını yazıp bana gönderebilirsiniz.\n_(Örnek: Buca, Aliağa Siteler vb.)_", reply_markup=klavye_butonlari)
         
     elif metin_temiz in ["TESEKKUR", "TESEKKURLER", "SAOL", "SAGOL", "EYVALLAH"]:
-        telegram_mesaj_gonder(chat_id, "🌸 Rica ederim! Görevim size kesintisiz su bilgisi ulaştırmak. Herhangi bir kesintide anında bildirim göndereceğim.", reply_markup=klavye_butonlari)
+        telegram_mesaj_gonder(chat_id, "🌸 Rica ederim! Herhangi bir kesintide sizi anında bilgilendireceğim.", reply_markup=klavye_butonlari)
 
-    # 🌟 2. EKLEME: Sadece İlçe Adı Yazıldığında Yakalama
-    elif metin_temiz in IZMIR_ILCELERI:
-        telegram_mesaj_gonder(chat_id, f"💡 Sanırım takip konumunuzu değiştirmek istiyorsunuz.\n\nKonumunuzu *{metin_temiz}* yapmak için lütfen aşağıdaki gibi yazıp gönderin:\n\n`/konum {metin.lower()}`", reply_markup=klavye_butonlari)
-
-    # 🌟 3. EKLEME: Anlaşılmayan Diğer Tüm Mesajlar İçin Gelişmiş Fallback
     else:
         yardim_mesaji = (
-            "⚠️ *Gönderdiğiniz mesajı tam anlayamadım...*\n\n"
-            "Beni kontrol etmek için alttaki butonları kullanabilir ya da şu komutları yazabilirsiniz:\n\n"
-            "📍 *Yeni Konum Ayarlamak İçin:*\n"
-            "`/konum ilçe` veya `/konum ilçe mahalle`\n\n"
-            "🔎 *Mevcut Konumu Sorgulamak İçin:*\n"
-            "`/neresi` yazabilirsiniz."
+            "⚠️ *Yazdığınız konumu veya mesajı tam anlayamadım...*\n\n"
+            "Yeni bir konumu takip etmek için sadece ilçe adını yazmanız yeterlidir:\n\n"
+            "👉 *Örnek:* `buca` ya da `aliağa siteler` yazıp gönderin.\n\n"
+            "🔎 Mevcut durum için aşağıdaki **🔎 Konumumu Sorgula** butonuna basabilirsiniz."
         )
         telegram_mesaj_gonder(chat_id, yardim_mesaji, reply_markup=klavye_butonlari)
 
