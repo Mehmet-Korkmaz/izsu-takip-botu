@@ -4,14 +4,13 @@ import time
 import threading
 import psycopg2
 from bs4 import BeautifulSoup
-from flask import Flask, request, render_template_string
+from flask import Flask, request
 
 app = Flask(__name__)
 
 TELEGRAM_TOKEN = "8839093288:AAH5OV9FN3vsrEmymLxsHPTv-26nkMikfEo"
-# Render Environment panelinden gelecek olan Supabase adresi
 DATABASE_URL = os.environ.get("DATABASE_URL")
-KONTROL_ARALIGI = 60  # Test için 1 dakika (60 saniye) tutuyoruz
+KONTROL_ARALIGI = 600  # 🚀 Gerçek takip için ideal süre: 10 Dakika (600 saniye)
 
 # İzmir'in tüm ilçeleri
 IZMIR_ILCELERI = [
@@ -21,45 +20,9 @@ IZMIR_ILCELERI = [
     "ÖDEMİŞ", "SEFERİHİSAR", "SELÇUK", "TİRE", "TORBALI", "URLA"
 ]
 
-# TEST İÇİN SAHTE İZSU VERİTABANI DEĞİŞKENİ
-sahte_izsu_verisi = """
-<tr>
-    <td>ALİAĞA</td>
-    <td>SİTELER MAHALLESİ</td>
-    <td>14.07.2026 16:00</td>
-    <td>Ana boru arızası nedeniyle bölgeye su verilememektedir.</td>
-</tr>
-"""
-
 @app.route('/')
 def home():
-    return "İZSU Kalıcı Supabase Takip Botu Aktif!"
-
-@app.route('/test-paneli', methods=['GET', 'POST'])
-def test_paneli():
-    global sahte_izsu_verisi
-    if request.method == 'POST':
-        sahte_izsu_verisi = request.form.get('izsu_html', '')
-        return """
-        <div style="color: green; font-weight: bold; margin-bottom: 20px;">✓ Sahte İZSU Verisi Güncellendi! Bot 1 dakika içinde kontrol edecek.</div>
-        <a href="/test-paneli">Panele Geri Dön</a>
-        """
-    
-    html_sablonu = """
-    <html>
-    <head><title>İZSU Simülatör Paneli</title></head>
-    <body style="font-family: Arial, sans-serif; margin: 40px; background-color: #f4f6f9;">
-        <h2>🧪 İZSU Kesinti Takip Test Paneli (Kalıcı Supabase Sürümü)</h2>
-        <p>Aşağıdaki HTML alanını değiştirerek İZSU sitesinde kesinti varmış veya sular gelmiş gibi davranabilirsin.</p>
-        <form method="POST">
-            <textarea name="izsu_html" rows="12" style="width: 100%; font-family: monospace; padding: 10px; font-size: 14px;">{{ tablo_icerigi }}</textarea>
-            <br><br>
-            <input type="submit" value="İZSU Sitesini Güncelle (Kaydet)" style="padding: 10px 20px; background-color: #007bff; color: white; border: none; cursor: pointer; border-radius: 5px;">
-        </form>
-    </body>
-    </html>
-    """
-    return render_template_string(html_sablonu, tablo_icerigi=sahte_izsu_verisi)
+    return "İZSU Canlı Takip Botu Aktif!"
 
 @app.route('/webhook', methods=['POST'])
 def telegram_webhook():
@@ -73,10 +36,10 @@ def telegram_webhook():
         print("Webhook İşleme Hatası:", e)
     return "OK", 200
 
-# SUPABASE POSTGRESQL VERİTABANI BAĞLANTISI VE TABLO KURULUMU
+# BULUT VERİTABANI BAĞLANTISI VE TABLO KURULUMU
 def db_kur():
     if not DATABASE_URL:
-        print("HATA: DATABASE_URL Environment Variable bulunamadı!")
+        print("HATA: DATABASE_URL bulunamadı!")
         return
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -86,7 +49,7 @@ def db_kur():
         conn.commit()
         cursor.close()
         conn.close()
-        print("Supabase Bağlantısı Başarılı ve Tablo Hazır!")
+        print("Supabase Bağlantısı Başarılı!")
     except Exception as e:
         print("Supabase Kurulum Hatası:", e)
 
@@ -162,13 +125,19 @@ def telegram_mesaj_sabitle(chat_id, message_id):
     try: requests.post(url, json=payload, timeout=10)
     except: pass
 
-def test_izsu_tablo_oku():
-    soup = BeautifulSoup(sahte_izsu_verisi, "html.parser")
+# 🌐 GERÇEK İZSU SİTESİNİ SCRAPE EDEN FONKSİYON
+def gercek_izsu_tablo_oku():
+    url = "https://izsu.gov.tr/bilgi-merkezi/ariza-ve-bakim-bilgisi-sorgulama"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    response = requests.get(url, headers=headers, timeout=20)
+    soup = BeautifulSoup(response.content, "html.parser")
     return soup.find_all("tr")
 
 def tek_seferlik_izsu_kontrol(chat_id, hedef_ilce, hedef_mahalle):
     try:
-        tablo_satirlari = test_izsu_tablo_oku()
+        tablo_satirlari = gercek_izsu_tablo_oku()
         aranacak_ilce = turkce_temizle(hedef_ilce)
         aranacak_mahalle = turkce_temizle(hedef_mahalle)
         
@@ -199,6 +168,7 @@ def tek_seferlik_izsu_kontrol(chat_id, hedef_ilce, hedef_mahalle):
             telegram_mesaj_gonder(chat_id, f"✅ Harika! Şu anda *{konum_str}* konumunda herhangi bir İZSU kesintisi görünmüyor.")
     except Exception as e:
         print("Sorgu Hatası:", e)
+        telegram_mesaj_gonder(chat_id, "❌ İZSU sitesine bağlanırken geçici bir sorun yaşandı.")
 
 def telegram_mesaj_isle(chat_id, metin):
     klavye_butonlari = {
@@ -216,7 +186,7 @@ def telegram_mesaj_isle(chat_id, metin):
     if metin == "/start" or metin == "❓ Nasıl Kullanılır?":
         kullanici_guncelle_veya_ekle(chat_id, "ALİAĞA", "SİTELER")
         hosgeldin_mesaji = (
-            "👋 *İZSU Kalıcı Bulut Botuna Hoş Geldiniz!*\n\n"
+            "👋 *İZSU Canlı Takip Botuna Hoş Geldiniz!*\n\n"
             "Takip etmek istediğiniz konumu direkt yazıp gönderin.\n"
             "👉 *Örnek:* `aliağa siteler` yazıp gönderin."
         )
@@ -229,27 +199,28 @@ def telegram_mesaj_isle(chat_id, metin):
         if len(parcalar) == 2:
             yeni_ilce = parcalar[1].upper()
             kullanici_guncelle_veya_ekle(chat_id, yeni_ilce, "TUMU")
-            telegram_mesaj_gonder(chat_id, f"💾 Başarılı! Takip konumunuz tüm *{yeni_ilce}* geneli olarak ayarlandı.", reply_markup=klavye_butonlari)
+            telegram_mesaj_gonder(chat_id, f"💾 Başarılı! Takip konumunuz tüm *{yeni_ilce}* geneli olarak ayarlandı.\n\n🔄 Canlı durum kontrol ediliyor...", reply_markup=klavye_butonlari)
             tek_seferlik_izsu_kontrol(chat_id, yeni_ilce, "TUMU")
         elif len(parcalar) >= 3:
             yeni_ilce = parcalar[1].upper()
             yeni_mahalle = " ".join(parcalar[2:]).upper()
             kullanici_guncelle_veya_ekle(chat_id, yeni_ilce, yeni_mahalle)
-            telegram_mesaj_gonder(chat_id, f"💾 Başarılı! Takip konumunuz kaydedildi:\n📍 {yeni_ilce} - {yeni_mahalle}", reply_markup=klavye_butonlari)
+            telegram_mesaj_gonder(chat_id, f"💾 Başarılı! Takip konumunuz kaydedildi:\n📍 {yeni_ilce} - {yeni_mahalle}\n\n🔄 Canlı durum kontrol ediliyor...", reply_markup=klavye_butonlari)
             tek_seferlik_izsu_kontrol(chat_id, yeni_ilce, yeni_mahalle)
 
     elif metin == "/neresi" or metin == "🔎 Konumumu Sorgula":
         ilce, mah = kullanici_oku(chat_id)
         mah_str = "Tüm Mahalleler" if mah == "TUMU" else mah
-        telegram_mesaj_gonder(chat_id, f"🔎 Şu an takip ettiğiniz konum:\n📍 {ilce} - {mah_str}", reply_markup=klavye_butonlari)
+        telegram_mesaj_gonder(chat_id, f"🔎 Şu an takip ettiğiniz konum:\n📍 {ilce} - {mah_str}\n\n🔄 Canlı durum kontrol ediliyor...", reply_markup=klavye_butonlari)
         tek_seferlik_izsu_kontrol(chat_id, ilce, mah)
 
+# 🌐 GERÇEK KONTROLLERİ 10 DAKİKADA BİR YAPAN OTOMATİK SİSTEM
 def izsu_otomatik_kontrol_et():
     while True:
         try:
             kullanicilar = tum_kullanicilari_getir_detayli()
             if kullanicilar:
-                tablo_satirlari = test_izsu_tablo_oku()
+                tablo_satirlari = gercek_izsu_tablo_oku()
                 satirlar_temiz = []
                 for satir in tablo_satirlari:
                     hucreler = [h.text.strip() for h in satir.find_all("td") if h.text.strip()]
@@ -271,6 +242,7 @@ def izsu_otomatik_kontrol_et():
                     yeni_durum = "||".join(kesintiler) if kesintiler else "YOK"
                     if eski_durum is None: eski_durum = "YOK"
                     
+                    # DURUM DEĞİŞİKLİĞİ TAKİBİ
                     if eski_durum != yeni_durum:
                         if yeni_durum == "YOK":
                             bildirim_metni = f"🎉 *MÜJDE! SULARINIZ GELDİ!* 💧\n\n📍 *{hedef_ilce.upper()}"
@@ -286,7 +258,7 @@ def izsu_otomatik_kontrol_et():
                         
                         kullanici_son_durum_guncelle(chat_id, yeni_durum)
         except Exception as e:
-            print("Otomatik kontrol hatası:", e)
+            print("Canlı otomatik kontrol hatası:", e)
         time.sleep(KONTROL_ARALIGI)
 
 def webhook_set():
