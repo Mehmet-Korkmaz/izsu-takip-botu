@@ -69,9 +69,11 @@ def turkce_temizle(metin):
         temiz_metin = temiz_metin.replace(kaynak, hotel)
     return temiz_metin.upper().strip()
 
-def telegram_mesaj_gonder(chat_id, mesaj):
+def telegram_mesaj_gonder(chat_id, mesaj, reply_markup=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": str(chat_id), "text": mesaj, "parse_mode": "Markdown"}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     try:
         r = requests.post(url, json=payload, timeout=10)
         return r.json()
@@ -79,7 +81,6 @@ def telegram_mesaj_gonder(chat_id, mesaj):
         return None
 
 def telegram_mesaj_sabitle(chat_id, message_id):
-    """Gönderilen hoş geldin mesajını sohbetin üstüne sabitler."""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage"
     payload = {"chat_id": str(chat_id), "message_id": message_id, "disable_notification": True}
     try: requests.post(url, json=payload, timeout=10)
@@ -130,29 +131,47 @@ def tek_seferlik_izsu_kontrol(chat_id, hedef_ilce, hedef_mahalle):
         telegram_mesaj_gonder(chat_id, "❌ İZSU sitesine bağlanırken bir hata oluştu.")
 
 def telegram_mesaj_isle(chat_id, metin):
+    # Eğer inline query butonundan gelen komut başında botun adı ile geldiyse onu temizliyoruz
+    if metin.startswith("/konum@izsu_takip_botu") or metin.startswith("@izsu_takip_botu"):
+        metin = metin.replace("/konum@izsu_takip_botu", "/konum").replace("@izsu_takip_botu", "").strip()
+
     if metin == "/start":
         kullanıcı_guncelle_veya_ekle(chat_id, "ALİAĞA", "SİTELER")
         
-        # Markdown formatında mesaj. /konum komutuna tıklayınca otomatik olarak input alanına düşer.
         hosgeldin_mesaji = (
             "👋 *İZSU Takip Botuna Hoş Geldiniz!*\n\n"
             "✍️ *Kullanım Şekilleri:*\n\n"
             "1️⃣ *Sadece İlçe Takibi İçin:*\n"
-            "`/konum` yazıp boşluk bırakarak ilçenizi ekleyin.\n"
+            "Aşağıdaki butona basarak sadece ilçe adını yazın.\n"
             "_(Örnek: /konum aliağa)_\n\n"
             "2️⃣ *Nokta Atışı Mahalle Takibi İçin:*\n"
-            "`/konum` yazıp boşluk bırakarak ilçe ve mahalle ekleyin.\n"
+            "Aşağıdaki butona basarak ilçe ve mahalle adını yazın.\n"
             "_(Örnek: /konum aliağa siteler)_\n\n"
             "🔎 Durumu sorgulamak için: /neresi yazabilirsiniz."
         )
         
-        sonuc = telegram_mesaj_gonder(chat_id, hosgeldin_mesaji)
+        # Mavi buton ekliyoruz. Bu butona basıldığında "Message" kısmına otomatik olarak "/konum " yazar.
+        klavye = {
+            "inline_keyboard": [[
+                {
+                    "text": "📍 Konum Yazmak İçin Tıkla", 
+                    "switch_inline_query_current_chat": "konum "
+                }
+            ]]
+        }
+        
+        sonuc = telegram_mesaj_gonder(chat_id, hosgeldin_mesaji, reply_markup=klavye)
         if sonuc and "result" in sonuc:
             msg_id = sonuc["result"]["message_id"]
             telegram_mesaj_sabitle(chat_id, msg_id)
-    
-    elif metin.startswith("/konum"):
-        parcalar = metin.split(" ")
+            
+    elif metin.startswith("/konum") or metin.startswith("konum"):
+        # "/konum" veya inline buton tetiklemesiyle gelen "konum" kelimelerini normalize ediyoruz
+        temiz_komut = metin
+        if temiz_komut.startswith("konum"):
+            temiz_komut = "/" + temiz_komut
+            
+        parcalar = temiz_komut.split(" ")
         if len(parcalar) == 2:
             yeni_ilce = parcalar[1].upper()
             kullanıcı_guncelle_veya_ekle(chat_id, yeni_ilce, "TUMU")
@@ -165,17 +184,8 @@ def telegram_mesaj_isle(chat_id, metin):
             telegram_mesaj_gonder(chat_id, f"💾 Başarılı! Takip konumunuz kaydedildi:\n📍 {yeni_ilce} - {yeni_mahalle}\n\n🔄 Şimdi anlık durum kontrol ediliyor...")
             tek_seferlik_izsu_kontrol(chat_id, yeni_ilce, yeni_mahalle)
         else:
-            # Eğer kullanıcı sadece /konum yazıp bıraktıysa, yazma alanına düşmesi için yönlendiriyoruz.
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-            payload = {
-                "chat_id": str(chat_id), 
-                "text": "✍️ Lütfen ilçenizi veya ilçe ve mahallenizi yazın:\n\n_Örnek: aliağa siteler_",
-                "parse_mode": "Markdown",
-                "reply_markup": {"force_reply": True, "selective": True}
-            }
-            try: requests.post(url, json=payload, timeout=10)
-            except: pass
-            
+            telegram_mesaj_gonder(chat_id, "⚠️ Hatalı kullanım!\nDoğrusu: `/konum ilçe` veya `/konum ilçe mahalle`\n\n💡 Aşağıdaki butona tıklayarak kolayca yazabilirsiniz.")
+
     elif metin == "/neresi":
         ilce, mah = kullanıcı_oku(chat_id)
         mah_str = "Tüm Mahalleler" if mah == "TUMU" else mah
