@@ -14,7 +14,7 @@ KONTROL_ARALIGI = 3600  # 1 Saat
 
 @app.route('/')
 def home():
-    return "İZSU Menü Destekli Webhook Botu Aktif!"
+    return "İZSU Webhook Takip Botu Aktif!"
 
 @app.route('/webhook', methods=['POST'])
 def telegram_webhook():
@@ -132,17 +132,15 @@ def telegram_mesaj_isle(chat_id, metin):
     if metin == "/start":
         kullanıcı_guncelle_veya_ekle(chat_id, "ALİAĞA", "SİTELER")
         
-        # /konum ifadelerini tek tıkla kopyalanabilir yaptık (Telefonda üstüne dokunmanız yeterli)
         hosgeldin_mesaji = (
             "👋 *İZSU Takip Botuna Hoş Geldiniz!*\n\n"
-            "✍️ *Kolay Kullanım Şekilleri:*\n\n"
+            "✍️ *Kullanım Şekilleri:*\n\n"
             "1️⃣ *Sadece İlçe Takibi İçin:*\n"
-            "Alttaki kutuya `/konum` yazıp boşluk bırakarak sadece ilçenizi ekleyin.\n"
+            "`/konum` yazıp boşluk bırakarak sadece ilçenizi ekleyin.\n"
             "_(Örnek: `/konum aliağa` )_\n\n"
             "2️⃣ *Nokta Atışı Mahalle Takibi İçin:*\n"
-            "Alttaki kutuya `/konum` yazıp boşluk bırakarak ilçe ve mahalle ekleyin.\n"
+            "`/konum` yazıp boşluk bırakarak ilçe ve mahalle ekleyin.\n"
             "_(Örnek: `/konum aliağa siteler` )_\n\n"
-            "💡 *Pratik İpucu:* Sol alttaki **Menü (/)** butonuna basarak doğrudan `/konum` yazdırabilirsiniz.\n"
             "🔎 Durumu sorgulamak için: `/neresi` yazabilirsiniz."
         )
         
@@ -212,34 +210,20 @@ def izsu_otomatik_kontrol_et():
             print("Otomatik kontrol hatası:", e)
         time.sleep(KONTROL_ARALIGI)
 
-def webhook_ve_menuler_kur():
+def webhook_set():
     time.sleep(5)
-    
-    # 1. Menü Komutlarını Telegram'a Tanımlama (Mesaj kutusundaki "/" veya "Menu" butonu için)
-    commands_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setMyCommands"
-    commands_payload = {
-        "commands": [
-            {"command": "konum", "description": "İlçe veya Mahalle takibi başlatır (/konum ilçe mahalle)"},
-            {"command": "neresi", "description": "Şu an takip ettiğiniz konumu sorgular"},
-            {"command": "start", "description": "Botu başlatır ve kılavuzu gösterir"}
-        ]
-    }
-    try: requests.post(commands_url, json=commands_payload, timeout=10)
-    except: pass
-
-    # 2. Webhook Kurulumu
     base_url = os.environ.get("RENDER_EXTERNAL_URL", "https://izsu-takip-botu.onrender.com")
     webhook_url = f"{base_url}/webhook"
     api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook"
     try:
         r = requests.post(api_url, json={"url": webhook_url}, timeout=10)
-        print("Telegram Webhook ve Menü Kurulum Durumu:", r.json())
+        print("Telegram Webhook Durumu:", r.json())
     except Exception as e:
         print("Webhook Kurulum Hatası:", e)
 
 db_kur()
 threading.Thread(target=izsu_otomatik_kontrol_et, daemon=True).start()
-threading.Thread(target=webhook_ve_menuler_kur, daemon=True).start()
+threading.Thread(target=webhook_set, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
