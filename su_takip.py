@@ -14,7 +14,7 @@ KONTROL_ARALIGI = 3600  # 1 Saat
 
 @app.route('/')
 def home():
-    return "İZSU Gelişmiş Webhook Botu Aktif!"
+    return "İZSU Menü Destekli Webhook Botu Aktif!"
 
 @app.route('/webhook', methods=['POST'])
 def telegram_webhook():
@@ -69,11 +69,9 @@ def turkce_temizle(metin):
         temiz_metin = temiz_metin.replace(kaynak, hotel)
     return temiz_metin.upper().strip()
 
-def telegram_mesaj_gonder(chat_id, mesaj, reply_markup=None):
+def telegram_mesaj_gonder(chat_id, mesaj):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": str(chat_id), "text": mesaj, "parse_mode": "Markdown"}
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
     try:
         r = requests.post(url, json=payload, timeout=10)
         return r.json()
@@ -131,47 +129,30 @@ def tek_seferlik_izsu_kontrol(chat_id, hedef_ilce, hedef_mahalle):
         telegram_mesaj_gonder(chat_id, "❌ İZSU sitesine bağlanırken bir hata oluştu.")
 
 def telegram_mesaj_isle(chat_id, metin):
-    # Eğer inline query butonundan gelen komut başında botun adı ile geldiyse onu temizliyoruz
-    if metin.startswith("/konum@izsu_takip_botu") or metin.startswith("@izsu_takip_botu"):
-        metin = metin.replace("/konum@izsu_takip_botu", "/konum").replace("@izsu_takip_botu", "").strip()
-
     if metin == "/start":
         kullanıcı_guncelle_veya_ekle(chat_id, "ALİAĞA", "SİTELER")
         
+        # /konum ifadelerini tek tıkla kopyalanabilir yaptık (Telefonda üstüne dokunmanız yeterli)
         hosgeldin_mesaji = (
             "👋 *İZSU Takip Botuna Hoş Geldiniz!*\n\n"
-            "✍️ *Kullanım Şekilleri:*\n\n"
+            "✍️ *Kolay Kullanım Şekilleri:*\n\n"
             "1️⃣ *Sadece İlçe Takibi İçin:*\n"
-            "Aşağıdaki butona basarak sadece ilçe adını yazın.\n"
-            "_(Örnek: /konum aliağa)_\n\n"
+            "Alttaki kutuya `/konum` yazıp boşluk bırakarak sadece ilçenizi ekleyin.\n"
+            "_(Örnek: `/konum aliağa` )_\n\n"
             "2️⃣ *Nokta Atışı Mahalle Takibi İçin:*\n"
-            "Aşağıdaki butona basarak ilçe ve mahalle adını yazın.\n"
-            "_(Örnek: /konum aliağa siteler)_\n\n"
-            "🔎 Durumu sorgulamak için: /neresi yazabilirsiniz."
+            "Alttaki kutuya `/konum` yazıp boşluk bırakarak ilçe ve mahalle ekleyin.\n"
+            "_(Örnek: `/konum aliağa siteler` )_\n\n"
+            "💡 *Pratik İpucu:* Sol alttaki **Menü (/)** butonuna basarak doğrudan `/konum` yazdırabilirsiniz.\n"
+            "🔎 Durumu sorgulamak için: `/neresi` yazabilirsiniz."
         )
         
-        # Mavi buton ekliyoruz. Bu butona basıldığında "Message" kısmına otomatik olarak "/konum " yazar.
-        klavye = {
-            "inline_keyboard": [[
-                {
-                    "text": "📍 Konum Yazmak İçin Tıkla", 
-                    "switch_inline_query_current_chat": "konum "
-                }
-            ]]
-        }
-        
-        sonuc = telegram_mesaj_gonder(chat_id, hosgeldin_mesaji, reply_markup=klavye)
+        sonuc = telegram_mesaj_gonder(chat_id, hosgeldin_mesaji)
         if sonuc and "result" in sonuc:
             msg_id = sonuc["result"]["message_id"]
             telegram_mesaj_sabitle(chat_id, msg_id)
             
-    elif metin.startswith("/konum") or metin.startswith("konum"):
-        # "/konum" veya inline buton tetiklemesiyle gelen "konum" kelimelerini normalize ediyoruz
-        temiz_komut = metin
-        if temiz_komut.startswith("konum"):
-            temiz_komut = "/" + temiz_komut
-            
-        parcalar = temiz_komut.split(" ")
+    elif metin.startswith("/konum"):
+        parcalar = metin.split(" ")
         if len(parcalar) == 2:
             yeni_ilce = parcalar[1].upper()
             kullanıcı_guncelle_veya_ekle(chat_id, yeni_ilce, "TUMU")
@@ -184,7 +165,7 @@ def telegram_mesaj_isle(chat_id, metin):
             telegram_mesaj_gonder(chat_id, f"💾 Başarılı! Takip konumunuz kaydedildi:\n📍 {yeni_ilce} - {yeni_mahalle}\n\n🔄 Şimdi anlık durum kontrol ediliyor...")
             tek_seferlik_izsu_kontrol(chat_id, yeni_ilce, yeni_mahalle)
         else:
-            telegram_mesaj_gonder(chat_id, "⚠️ Hatalı kullanım!\nDoğrusu: `/konum ilçe` veya `/konum ilçe mahalle`\n\n💡 Aşağıdaki butona tıklayarak kolayca yazabilirsiniz.")
+            telegram_mesaj_gonder(chat_id, "⚠️ Hatalı kullanım!\nDoğrusu: `/konum ilçe` veya `/konum ilçe mahalle`\nÖrnek: `/konum aliağa siteler`")
 
     elif metin == "/neresi":
         ilce, mah = kullanıcı_oku(chat_id)
@@ -231,20 +212,34 @@ def izsu_otomatik_kontrol_et():
             print("Otomatik kontrol hatası:", e)
         time.sleep(KONTROL_ARALIGI)
 
-def webhook_set():
+def webhook_ve_menuler_kur():
     time.sleep(5)
+    
+    # 1. Menü Komutlarını Telegram'a Tanımlama (Mesaj kutusundaki "/" veya "Menu" butonu için)
+    commands_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setMyCommands"
+    commands_payload = {
+        "commands": [
+            {"command": "konum", "description": "İlçe veya Mahalle takibi başlatır (/konum ilçe mahalle)"},
+            {"command": "neresi", "description": "Şu an takip ettiğiniz konumu sorgular"},
+            {"command": "start", "description": "Botu başlatır ve kılavuzu gösterir"}
+        ]
+    }
+    try: requests.post(commands_url, json=commands_payload, timeout=10)
+    except: pass
+
+    # 2. Webhook Kurulumu
     base_url = os.environ.get("RENDER_EXTERNAL_URL", "https://izsu-takip-botu.onrender.com")
     webhook_url = f"{base_url}/webhook"
     api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook"
     try:
         r = requests.post(api_url, json={"url": webhook_url}, timeout=10)
-        print("Telegram Webhook Durumu:", r.json())
+        print("Telegram Webhook ve Menü Kurulum Durumu:", r.json())
     except Exception as e:
         print("Webhook Kurulum Hatası:", e)
 
 db_kur()
 threading.Thread(target=izsu_otomatik_kontrol_et, daemon=True).start()
-threading.Thread(target=webhook_set, daemon=True).start()
+threading.Thread(target=webhook_ve_menuler_kur, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
