@@ -4,15 +4,14 @@ import time
 import threading
 import sqlite3
 from bs4 import BeautifulSoup
-from flask import Flask, request
+from flask import Flask, request, render_template_string
 
 app = Flask(__name__)
 
 TELEGRAM_TOKEN = "8839093288:AAH5OV9FN3vsrEmymLxsHPTv-26nkMikfEo"
 DB_DOSYASI = "hafiza.db"
-KONTROL_ARALIGI = 3600  # 1 Saat
+KONTROL_ARALIGI = 60  # 🚀 TEST İÇİN 1 DAKİKAYA DÜŞÜRDÜK (Normalde 600 saniye)
 
-# İzmir'in tüm ilçeleri (Sadece ilçe adı yazıldığında otomatik algılamak için)
 IZMIR_ILCELERI = [
     "ALİAĞA", "BALÇOVA", "BAYINDIR", "BAYRAKLI", "BERGAMA", "BEYDAĞ", "BORNOVA", "BUCA",
     "ÇEŞME", "ÇİĞLİ", "DİKİLİ", "FOÇA", "GAZİEMİR", "GÜZELBAHÇE", "KARABAĞLAR", "KARABURUN",
@@ -20,9 +19,54 @@ IZMIR_ILCELERI = [
     "ÖDEMİŞ", "SEFERİHİSAR", "SELÇUK", "TİRE", "TORBALI", "URLA"
 ]
 
+# 🧪 TEST İÇİN SAHTE İZSU VERİTABANI DEĞİŞKENİ
+sahte_izsu_verisi = """
+<tr>
+    <td>ALİAĞA</td>
+    <td>SİTELER MAHALLESİ</td>
+    <td>14.07.2026 15:00</td>
+    <td>Planlı bakım çalışması nedeniyle su kesintisi yaşanmaktadır.</td>
+</tr>
+"""
+
 @app.route('/')
 def home():
-    return "İZSU Akıllı Webhook Botu Aktif!"
+    return "İZSU Akıllı Değişiklik Takip Botu Aktif! Test paneli için /test-paneli adresine gidin."
+
+# 🧪 SAHTE İZSU SİTESİ PANELİ (BURADAN KESİNTİLERİ DEĞİŞTİREBİLİRSİN)
+@app.route('/test-paneli', methods=['GET', 'POST'])
+def test_paneli():
+    global sahte_izsu_verisi
+    if request.method == 'POST':
+        sahte_izsu_verisi = request.form.get('izsu_html', '')
+        return """
+        <div style="color: green; font-weight: bold; margin-bottom: 20px;">✓ Sahte İZSU Verisi Güncellendi! Bot 1 dakika içinde kontrol edecek.</div>
+        <a href="/test-paneli">Panele Geri Dön</a>
+        """
+    
+    html_sablonu = """
+    <html>
+    <head><title>İZSU Simülatör Paneli</title></head>
+    <body style="font-family: Arial, sans-serif; margin: 40px; background-color: #f4f6f9;">
+        <h2>🧪 İZSU Kesinti Takip Test Paneli</h2>
+        <p>Aşağıdaki HTML alanını değiştirerek İZSU sitesinde kesinti varmış veya sular gelmiş gibi davranabilirsin.</p>
+        
+        <form method="POST">
+            <textarea name="izsu_html" rows="12" style="width: 100%; font-family: monospace; padding: 10px; font-size: 14px;">{{ tablo_icerigi }}</textarea>
+            <br><br>
+            <input type="submit" value="İZSU Sitesini Güncelle (Kaydet)" style="padding: 10px 20px; background-color: #007bff; color: white; border: none; cursor: pointer; border-radius: 5px;">
+        </form>
+        
+        <hr>
+        <h3>💡 Nasıl Test Edilir?</h3>
+        <ul>
+            <li><strong>Kesinti Bildirimi Testi:</strong> Yukarıdaki kutuya dokunmadan direkt "Güncelle" deyin. Bot 1 dakika içinde size Aliağa - Siteler kesintisi mesajı gönderecektir.</li>
+            <li><strong>Sular Geldi Bildirimi Testi:</strong> Yukarıdaki kutunun içindeki her şeyi tamamen silip boş bırakın ve "Güncelle" butonuna basın. Bot 1 dakika içinde "MÜJDE! Sularınız Geldi" bildirimi gönderecektir.</li>
+        </ul>
+    </body>
+    </html>
+    """
+    return render_template_string(html_sablonu, tablo_icerigi=sahte_izsu_verisi)
 
 @app.route('/webhook', methods=['POST'])
 def telegram_webhook():
@@ -40,15 +84,26 @@ def db_kur():
     conn = sqlite3.connect(DB_DOSYASI)
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS kullanıcılar 
-                      (chat_id TEXT PRIMARY KEY, ilce TEXT, mahalle TEXT)''')
+                      (chat_id TEXT PRIMARY KEY, ilce TEXT, mahalle TEXT, son_durum TEXT)''')
+    try:
+        cursor.execute("ALTER TABLE kullanıcılar ADD COLUMN son_durum TEXT")
+    except:
+        pass
     conn.commit()
     conn.close()
 
 def kullanıcı_guncelle_veya_ekle(chat_id, ilce, mahalle):
     conn = sqlite3.connect(DB_DOSYASI)
     cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO kullanıcılar (chat_id, ilce, mahalle) VALUES (?, ?, ?)", 
+    cursor.execute("INSERT OR REPLACE INTO kullanıcılar (chat_id, ilce, mahalle, son_durum) VALUES (?, ?, ?, NULL)", 
                    (str(chat_id), ilce.upper().strip(), mahalle.upper().strip()))
+    conn.commit()
+    conn.close()
+
+def kullanıcı_son_durum_guncelle(chat_id, yeni_durum):
+    conn = sqlite3.connect(DB_DOSYASI)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE kullanıcılar SET son_durum = ? WHERE chat_id = ?", (yeni_durum, str(chat_id)))
     conn.commit()
     conn.close()
 
@@ -60,10 +115,10 @@ def kullanıcı_oku(chat_id):
     conn.close()
     return sonuc if sonuc else ("ALİAĞA", "SİTELER")
 
-def tum_kullanıcıları_getir():
+def tum_kullanıcıları_getir_detayli():
     conn = sqlite3.connect(DB_DOSYASI)
     cursor = conn.cursor()
-    cursor.execute("SELECT chat_id, ilce, mahalle FROM kullanıcılar")
+    cursor.execute("SELECT chat_id, ilce, mahalle, son_durum FROM kullanıcılar")
     sonuclar = cursor.fetchall()
     conn.close()
     return sonuclar
@@ -94,24 +149,21 @@ def telegram_mesaj_sabitle(chat_id, message_id):
     try: requests.post(url, json=payload, timeout=10)
     except: pass
 
+# 🚀 GERÇEK SİTE YERİNE SAHTE VERİYİ OKUYAN KONTROL FONKSİYONU (TEST AMAÇLI)
+def test_izsu_tablo_oku():
+    # Gerçek siteye gitmek yerine test panelinde tanımlanan HTML'i parse eder
+    soup = BeautifulSoup(sahte_izsu_verisi, "html.parser")
+    return soup.find_all("tr")
+
 def tek_seferlik_izsu_kontrol(chat_id, hedef_ilce, hedef_mahalle):
-    url = "https://izsu.gov.tr/bilgi-merkezi/ariza-ve-bakim-bilgisi-sorgulama"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(response.content, "html.parser")
-        tablo_satirlari = soup.find_all("tr")
-        
+        tablo_satirlari = test_izsu_tablo_oku()
         aranacak_ilce = turkce_temizle(hedef_ilce)
         aranacak_mahalle = turkce_temizle(hedef_mahalle)
         
         kesintiler = []
-        
         for satir in tablo_satirlari:
             temiz_satir_metni = turkce_temizle(satir.text)
-            
             if aranacak_mahalle == "TUMU":
                 if aranacak_ilce in temiz_satir_metni:
                     hucreler = [h.text.strip() for h in satir.find_all("td") if h.text.strip()]
@@ -124,35 +176,30 @@ def tek_seferlik_izsu_kontrol(chat_id, hedef_ilce, hedef_mahalle):
                         break
                         
         if kesintiler:
+            yeni_hafiza_durumu = "||".join(kesintiler)
+            kullanıcı_son_durum_guncelle(chat_id, yeni_hafiza_durumu)
             bildirim_metni = f"💧 *İZSU KESİNTİ BİLDİRİMİ* 💧\n\n📍 Konum: {hedef_ilce.upper()}"
             if aranacak_mahalle != "TUMU":
                 bildirim_metni += f" - {hedef_mahalle.upper()}"
-            
             bildirim_metni += "\n\n📋 BULUNAN KESİNTİLER:\n\n" + "\n\n──────────────────\n\n".join(kesintiler)
             telegram_mesaj_gonder(chat_id, bildirim_metni)
         else:
+            kullanıcı_son_durum_guncelle(chat_id, "YOK")
             konum_str = f"{hedef_ilce.upper()}" + (f" - {hedef_mahalle.upper()}" if aranacak_mahalle != "TUMU" else " (Tüm Mahalleler)")
             telegram_mesaj_gonder(chat_id, f"✅ Harika! Şu anda *{konum_str}* konumunda herhangi bir İZSU kesintisi görünmüyor.")
-            
     except Exception as e:
         print("Sorgu Hatası:", e)
-        telegram_mesaj_gonder(chat_id, "❌ İZSU sitesine bağlanırken bir hata oluştu.")
 
 def telegram_mesaj_isle(chat_id, metin):
-    # Ekranın altındaki pratik butonlarımız
     klavye_butonlari = {
-        "keyboard": [
-            [{"text": "🔎 Konumumu Sorgula"}, {"text": "❓ Nasıl Kullanılır?"}]
-        ],
+        "keyboard": [[{"text": "🔎 Konumumu Sorgula"}, {"text": "❓ Nasıl Kullanılır?"}]],
         "resize_keyboard": True,
         "one_time_keyboard": False
     }
 
-    # Kullanıcı sadece "aliağa siteler" gibi düz metin yazdıysa, ilk kelimeyi kontrol et:
     parcalar = metin.split(" ")
     ilk_kelime = turkce_temizle(parcalar[0])
 
-    # 🌟 EĞER BAŞINDA "/" YOKSA VE İLK KELİME BİR İLÇEYSE, OTOMATİK OLARAK /konum GİBİ DAVRAN:
     if not metin.startswith("/") and ilk_kelime in IZMIR_ILCELERI:
         metin = f"/konum {metin}"
 
@@ -160,93 +207,86 @@ def telegram_mesaj_isle(chat_id, metin):
 
     if metin == "/start" or metin == "❓ Nasıl Kullanılır?":
         kullanıcı_guncelle_veya_ekle(chat_id, "ALİAĞA", "SİTELER")
-        
         hosgeldin_mesaji = (
             "👋 *İZSU Takip Botuna Hoş Geldiniz!*\n\n"
-            "✍️ *Konum Ayarlamak Çok Kolay:*\n\n"
-            "Artık hiçbir komut yazmanıza gerek yok! Doğrudan takip etmek istediğiniz konumu yazıp gönderin.\n\n"
-            "👉 *Örnek 1 (Sadece İlçe):* `buca`\n"
-            "👉 *Örnek 2 (İlçe ve Mahalle):* `aliağa siteler`\n\n"
-            "🔎 Mevcut takip konumunuzu kontrol etmek için aşağıdaki **🔎 Konumumu Sorgula** butonuna basmanız yeterli!"
+            "Takip etmek istediğiniz konumu direkt yazıp gönderin.\n"
+            "👉 *Örnek:* `aliağa siteler` yazıp gönderin.\n\n"
+            "🔎 Konum sorgulamak için aşağıdaki butonu kullanabilirsiniz."
         )
-        
         sonuc = telegram_mesaj_gonder(chat_id, hosgeldin_mesaji, reply_markup=klavye_butonlari)
         if sonuc and "result" in sonuc:
-            msg_id = sonuc["result"]["message_id"]
-            telegram_mesaj_sabitle(chat_id, msg_id)
+            telegram_mesaj_sabitle(chat_id, sonuc["result"]["message_id"])
             
     elif metin.startswith("/konum"):
         parcalar = metin.split(" ")
         if len(parcalar) == 2:
             yeni_ilce = parcalar[1].upper()
             kullanıcı_guncelle_veya_ekle(chat_id, yeni_ilce, "TUMU")
-            telegram_mesaj_gonder(chat_id, f"💾 Başarılı! Takip konumunuz tüm *{yeni_ilce}* geneli olarak ayarlandı.\n\n🔄 Şimdi anlık durum kontrol ediliyor...", reply_markup=klavye_butonlari)
+            telegram_mesaj_gonder(chat_id, f"💾 Başarılı! Takip konumunuz tüm *{yeni_ilce}* geneli olarak ayarlandı.\n\n🔄 Şimdi durum kontrol ediliyor...", reply_markup=klavye_butonlari)
             tek_seferlik_izsu_kontrol(chat_id, yeni_ilce, "TUMU")
         elif len(parcalar) >= 3:
             yeni_ilce = parcalar[1].upper()
             yeni_mahalle = " ".join(parcalar[2:]).upper()
             kullanıcı_guncelle_veya_ekle(chat_id, yeni_ilce, yeni_mahalle)
-            telegram_mesaj_gonder(chat_id, f"💾 Başarılı! Takip konumunuz kaydedildi:\n📍 {yeni_ilce} - {yeni_mahalle}\n\n🔄 Şimdi anlık durum kontrol ediliyor...", reply_markup=klavye_butonlari)
+            telegram_mesaj_gonder(chat_id, f"💾 Başarılı! Takip konumunuz kaydedildi:\n📍 {yeni_ilce} - {yeni_mahalle}\n\n🔄 Şimdi durum kontrol ediliyor...", reply_markup=klavye_butonlari)
             tek_seferlik_izsu_kontrol(chat_id, yeni_ilce, yeni_mahalle)
-        else:
-            telegram_mesaj_gonder(chat_id, "⚠️ Hatalı kullanım!\nLütfen sadece takip etmek istediğiniz konumu yazın.\nÖrnek: `buca` ya da `aliağa siteler`", reply_markup=klavye_butonlari)
 
     elif metin == "/neresi" or metin == "🔎 Konumumu Sorgula":
         ilce, mah = kullanıcı_oku(chat_id)
         mah_str = "Tüm Mahalleler" if mah == "TUMU" else mah
-        telegram_mesaj_gonder(chat_id, f"🔎 Şu an takip ettiğiniz konum:\n📍 {ilce} - {mah_str}\n\n🔄 Şimdi anlık durum kontrol ediliyor...", reply_markup=klavye_butonlari)
+        telegram_mesaj_gonder(chat_id, f"🔎 Şu an takip ettiğiniz konum:\n📍 {ilce} - {mah_str}\n\n🔄 Şimdi durum kontrol ediliyor...", reply_markup=klavye_butonlari)
         tek_seferlik_izsu_kontrol(chat_id, ilce, mah)
 
-    elif metin_temiz in ["SELAM", "MERHABA", "SLM", "MRB", "SA", "AS"]:
-        telegram_mesaj_gonder(chat_id, "👋 Merhaba! Konumunuzu değiştirmek için doğrudan ilçe veya mahalle adını yazıp bana gönderebilirsiniz.\n_(Örnek: Buca, Aliağa Siteler vb.)_", reply_markup=klavye_butonlari)
-        
-    elif metin_temiz in ["TESEKKUR", "TESEKKURLER", "SAOL", "SAGOL", "EYVALLAH"]:
-        telegram_mesaj_gonder(chat_id, "🌸 Rica ederim! Herhangi bir kesintide sizi anında bilgilendireceğim.", reply_markup=klavye_butonlari)
-
-    else:
-        yardim_mesaji = (
-            "⚠️ *Yazdığınız konumu veya mesajı tam anlayamadım...*\n\n"
-            "Yeni bir konumu takip etmek için sadece ilçe adını yazmanız yeterlidir:\n\n"
-            "👉 *Örnek:* `buca` ya da `aliağa siteler` yazıp gönderin.\n\n"
-            "🔎 Mevcut durum için aşağıdaki **🔎 Konumumu Sorgula** butonuna basabilirsiniz."
-        )
-        telegram_mesaj_gonder(chat_id, yardim_mesaji, reply_markup=klavye_butonlari)
-
+# 🚀 DEĞİŞİKLİKLERİ YAKALAYAN OTOMATİK KONTROL MEKANİZMASI (1 DAKİKADA BİR ÇALIŞIR)
 def izsu_otomatik_kontrol_et():
     while True:
         try:
-            kullanıcılar = tum_kullanıcıları_getir()
+            kullanıcılar = tum_kullanıcıları_getir_detayli()
             if kullanıcılar:
-                url = "https://izsu.gov.tr/bilgi-merkezi/ariza-ve-bakim-bilgisi-sorgulama"
-                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-                response = requests.get(url, headers=headers, timeout=20)
-                soup = BeautifulSoup(response.content, "html.parser")
-                tablo_satirlari = soup.find_all("tr")
-                
-                for chat_id, hedef_ilce, hedef_mahalle in kullanıcılar:
+                tablo_satirlari = test_izsu_tablo_oku()
+                satirlar_temiz = []
+                for satir in tablo_satirlari:
+                    hucreler = [h.text.strip() for h in satir.find_all("td") if h.text.strip()]
+                    if hucreler:
+                        satirlar_temiz.append((turkce_temizle(satir.text), hucreler))
+
+                for chat_id, hedef_ilce, hedef_mahalle, eski_durum in kullanıcılar:
                     aranacak_ilce = turkce_temizle(hedef_ilce)
                     aranacak_mahalle = turkce_temizle(hedef_mahalle)
                     
                     kesintiler = []
-                    for satir in tablo_satirlari:
-                        temiz_satir_metni = turkce_temizle(satir.text)
-                        
+                    for temiz_satir_metni, hucreler in satirlar_temiz:
                         if aranacak_mahalle == "TUMU":
                             if aranacak_ilce in temiz_satir_metni:
-                                hucreler = [h.text.strip() for h in satir.find_all("td") if h.text.strip()]
-                                if hucreler: kesintiler.append("\n📝 ".join(hucreler))
+                                kesintiler.append("\n📝 ".join(hucreler))
                         else:
                             if aranacak_ilce in temiz_satir_metni and aranacak_mahalle in temiz_satir_metni:
-                                hucreler = [h.text.strip() for h in satir.find_all("td") if h.text.strip()]
-                                if hucreler:
-                                    kesintiler.append("\n📝 ".join(hucreler))
-                                    break
-                                    
-                    if kesintiler:
-                        bildirim_metni = f"💧 *İZSU OTOMATİK BİLDİRİM* 💧\n\n📍 Konum: {hedef_ilce.upper()}"
-                        if aranacak_mahalle != "TUMU": bildirim_metni += f" - {hedef_mahalle.upper()}"
-                        bildirim_metni += "\n\n📋 KESİNTİLER:\n\n" + "\n\n──────────────────\n\n".join(kesintiler)
-                        telegram_mesaj_gonder(chat_id, bildirim_metni)
+                                kesintiler.append("\n📝 ".join(hucreler))
+                                break
+                                
+                    yeni_durum = "||".join(kesintiler) if kesintiler else "YOK"
+                    if eski_durum is None:
+                        eski_durum = "YOK"
+                    
+                    # 🚀 DURUM DEĞİŞTİ Mİ?
+                    if eski_durum != yeni_durum:
+                        if yeni_durum == "YOK":
+                            # Kesinti bitti -> Sular Geldi!
+                            bildirim_metni = f"🎉 *MÜJDE! SULARINIZ GELDİ!* 💧\n\n📍 *{hedef_ilce.upper()}"
+                            if aranacak_mahalle != "TUMU":
+                                bildirim_metni += f" - {hedef_mahalle.upper()}"
+                            bildirim_metni += "* konumundaki su kesintisi sona erdi. ✅"
+                            telegram_mesaj_gonder(chat_id, bildirim_metni)
+                        else:
+                            # Yeni kesinti başladı!
+                            formatli_kesintiler = yeni_durum.replace("||", "\n\n──────────────────\n\n")
+                            bildirim_metni = f"🚨 *YENİ İZSU BİLDİRİMİ* 🚨\n\n📍 Konum: {hedef_ilce.upper()}"
+                            if aranacak_mahalle != "TUMU":
+                                bildirim_metni += f" - {hedef_mahalle.upper()}"
+                            bildirim_metni += "\n\n📋 BULUNAN KESİNTİ DETAYLARI:\n\n" + formatli_kesintiler
+                            telegram_mesaj_gonder(chat_id, bildirim_metni)
+                        
+                        kullanıcı_son_durum_guncelle(chat_id, yeni_durum)
         except Exception as e:
             print("Otomatik kontrol hatası:", e)
         time.sleep(KONTROL_ARALIGI)
@@ -256,11 +296,8 @@ def webhook_set():
     base_url = os.environ.get("RENDER_EXTERNAL_URL", "https://izsu-takip-botu.onrender.com")
     webhook_url = f"{base_url}/webhook"
     api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook"
-    try:
-        r = requests.post(api_url, json={"url": webhook_url}, timeout=10)
-        print("Telegram Webhook Durumu:", r.json())
-    except Exception as e:
-        print("Webhook Kurulum Hatası:", e)
+    try: requests.post(api_url, json={"url": webhook_url}, timeout=10)
+    except: pass
 
 db_kur()
 threading.Thread(target=izsu_otomatik_kontrol_et, daemon=True).start()
