@@ -144,23 +144,28 @@ def tek_seferlik_izsu_kontrol(chat_id, hedef_ilce, hedef_mahalle):
         kesintiler = []
         for satir in tablo_satirlari:
             temiz_satir_metni = turkce_temizle(satir.text)
-            if aranacak_mahalle == "TUMU":
-                if aranacak_ilce in temiz_satir_metni:
-                    hucreler = [h.text.strip() for h in satir.find_all("td") if h.text.strip()]
-                    if hucreler: kesintiler.append("\n📝 ".join(hucreler))
-            else:
-                if aranacak_ilce in temiz_satir_metni and aranacak_mahalle in temiz_satir_metni:
-                    hucreler = [h.text.strip() for h in satir.find_all("td") if h.text.strip()]
-                    if hucreler:
-                        kesintiler.append("\n📝 ".join(hucreler))
+            
+            # İlçe ve mahalle kontrolü
+            if (aranacak_mahalle == "TUMU" and aranacak_ilce in temiz_satir_metni) or \
+               (aranacak_mahalle != "TUMU" and aranacak_ilce in temiz_satir_metni and aranacak_mahalle in temiz_satir_metni):
+                
+                hucreler = [h.text.strip() for h in satir.find_all("td")]
+                # Eğer satırda İZSU'nun standart 5 sütunu varsa biçimlendirerek alıyoruz
+                if len(hucreler) >= 5:
+                    formatli_veri = (
+                        f"🏙️ *Mahalle:* {hucreler[1]}\n"
+                        f"⏰ *Kesinti Süresi:* {hucreler[2]}\n"
+                        f"🔧 *Arıza Tipi:* {hucreler[3]}\n"
+                        f"📝 *Açıklama:* {hucreler[4]}"
+                    )
+                    kesintiler.append(formatli_veri)
+                    if aranacak_mahalle != "TUMU":
                         break
                         
         if kesintiler:
             yeni_hafiza_durumu = "||".join(kesintiler)
             kullanici_son_durum_guncelle(chat_id, yeni_hafiza_durumu)
-            bildirim_metni = f"💧 *İZSU KESİNTİ BİLDİRİMİ* 💧\n\n📍 Konum: {hedef_ilce.upper()}"
-            if aranacak_mahalle != "TUMU": bildirim_metni += f" - {hedef_mahalle.upper()}"
-            bildirim_metni += "\n\n📋 BULUNAN KESİNTİLER:\n\n" + "\n\n──────────────────\n\n".join(kesintiler)
+            bildirim_metni = f"💧 *İZSU KESİNTİ BİLDİRİMİ* 💧\n\n📍 *İlçe:* {hedef_ilce.upper()}\n\n" + "\n\n──────────────────\n\n".join(kesintiler)
             telegram_mesaj_gonder(chat_id, bildirim_metni)
         else:
             kullanici_son_durum_guncelle(chat_id, "YOK")
@@ -223,20 +228,28 @@ def izsu_otomatik_kontrol_et():
                 tablo_satirlari = gercek_izsu_tablo_oku()
                 satirlar_temiz = []
                 for satir in tablo_satirlari:
-                    hucreler = [h.text.strip() for h in satir.find_all("td") if h.text.strip()]
-                    if hucreler: satirlar_temiz.append((turkce_temizle(satir.text), hucreler))
+                    hucreler = [h.text.strip() for h in satir.find_all("td")]
+                    if len(hucreler) >= 5:
+                        formatli_veri = (
+                            f"🏙️ *Mahalle:* {hucreler[1]}\n"
+                            f"⏰ *Kesinti Süresi:* {hucreler[2]}\n"
+                            f"🔧 *Arıza Tipi:* {hucreler[3]}\n"
+                            f"📝 *Açıklama:* {hucreler[4]}"
+                        )
+                        satirlar_temiz.append((turkce_temizle(satir.text), formatli_veri))
 
                 for chat_id, hedef_ilce, hedef_mahalle, eski_durum in kullanicilar:
                     aranacak_ilce = turkce_temizle(hedef_ilce)
                     aranacak_mahalle = turkce_temizle(hedef_mahalle)
                     
                     kesintiler = []
-                    for temiz_satir_metni, hucreler in satirlar_temiz:
+                    for temiz_satir_metni, formatli_veri in satirlar_temiz:
                         if aranacak_mahalle == "TUMU":
-                            if aranacak_ilce in temiz_satir_metni: kesintiler.append("\n📝 ".join(hucreler))
+                            if aranacak_ilce in temiz_satir_metni: 
+                                kesintiler.append(formatli_veri)
                         else:
                             if aranacak_ilce in temiz_satir_metni and aranacak_mahalle in temiz_satir_metni:
-                                kesintiler.append("\n📝 ".join(hucreler))
+                                kesintiler.append(formatli_veri)
                                 break
                                 
                     yeni_durum = "||".join(kesintiler) if kesintiler else "YOK"
@@ -251,9 +264,7 @@ def izsu_otomatik_kontrol_et():
                             telegram_mesaj_gonder(chat_id, bildirim_metni)
                         else:
                             formatli_kesintiler = yeni_durum.replace("||", "\n\n──────────────────\n\n")
-                            bildirim_metni = f"🚨 *YENİ İZSU BİLDİRİMİ* 🚨\n\n📍 Konum: {hedef_ilce.upper()}"
-                            if aranacak_mahalle != "TUMU": bildirim_metni += f" - {hedef_mahalle.upper()}"
-                            bildirim_metni += "\n\n📋 BULUNAN KESİNTİ DETAYLARI:\n\n" + formatli_kesintiler
+                            bildirim_metni = f"🚨 *YENİ İZSU BİLDİRİMİ* 🚨\n\n📍 *İlçe:* {hedef_ilce.upper()}\n\n" + formatli_kesintiler
                             telegram_mesaj_gonder(chat_id, bildirim_metni)
                         
                         kullanici_son_durum_guncelle(chat_id, yeni_durum)
