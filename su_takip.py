@@ -4,17 +4,29 @@ import time
 import threading
 import sqlite3
 from bs4 import BeautifulSoup
-from flask import Flask
+from flask import Flask, request
 
 app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "İZSU Gelişmiş İlçe/Mahalle Takip Botu Aktif!"
 
 TELEGRAM_TOKEN = "8839093288:AAH5OV9FN3vsrEmymLxsHPTv-26nkMikfEo"
 DB_DOSYASI = "hafiza.db"
 KONTROL_ARALIGI = 3600  # 1 Saat
+
+@app.route('/')
+def home():
+    return "İZSU Gelişmiş Webhook Botu Aktif!"
+
+@app.route('/webhook', methods=['POST'])
+def telegram_webhook():
+    try:
+        veri = request.get_json()
+        if "message" in veri and "text" in veri["message"]:
+            chat_id = veri["message"]["chat"]["id"]
+            metin = veri["message"]["text"].strip()
+            telegram_mesaj_isle(chat_id, metin)
+    except Exception as e:
+        print("Webhook İşleme Hatası:", e)
+    return "OK", 200
 
 def db_kur():
     conn = sqlite3.connect(DB_DOSYASI)
@@ -59,7 +71,17 @@ def turkce_temizle(metin):
 
 def telegram_mesaj_gonder(chat_id, mesaj):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": str(chat_id), "text": mesaj}
+    payload = {"chat_id": str(chat_id), "text": mesaj, "parse_mode": "Markdown"}
+    try:
+        r = requests.post(url, json=payload, timeout=10)
+        return r.json()
+    except:
+        return None
+
+def telegram_mesaj_sabitle(chat_id, message_id):
+    """Gönderilen hoş geldin mesajını sohbetin üstüne sabitler."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/pinChatMessage"
+    payload = {"chat_id": str(chat_id), "message_id": message_id, "disable_notification": True}
     try: requests.post(url, json=payload, timeout=10)
     except: pass
 
@@ -81,22 +103,19 @@ def tek_seferlik_izsu_kontrol(chat_id, hedef_ilce, hedef_mahalle):
         for satir in tablo_satirlari:
             temiz_satir_metni = turkce_temizle(satir.text)
             
-            # Eğer sadece ilçe aratılıyorsa (mahalle "TUMU" ise)
             if aranacak_mahalle == "TUMU":
                 if aranacak_ilce in temiz_satir_metni:
                     hucreler = [h.text.strip() for h in satir.find_all("td") if h.text.strip()]
-                    if hucreler:
-                        kesintiler.append("\n📝 ".join(hucreler))
+                    if hucreler: kesintiler.append("\n📝 ".join(hucreler))
             else:
-                # Hem ilçe hem mahalle eşleşmesi aranıyorsa
                 if aranacak_ilce in temiz_satir_metni and aranacak_mahalle in temiz_satir_metni:
                     hucreler = [h.text.strip() for h in satir.find_all("td") if h.text.strip()]
                     if hucreler:
                         kesintiler.append("\n📝 ".join(hucreler))
-                        break # Nokta atışı aramada ilk eşleşme yeterli
+                        break
                         
         if kesintiler:
-            bildirim_metni = f"💧 İZSU KESİNTİ BİLDİRİMİ 💧\n\n📍 Konum: {hedef_ilce.upper()}"
+            bildirim_metni = f"💧 *İZSU KESİNTİ BİLDİRİMİ* 💧\n\n📍 Konum: {hedef_ilce.upper()}"
             if aranacak_mahalle != "TUMU":
                 bildirim_metni += f" - {hedef_mahalle.upper()}"
             
@@ -104,11 +123,64 @@ def tek_seferlik_izsu_kontrol(chat_id, hedef_ilce, hedef_mahalle):
             telegram_mesaj_gonder(chat_id, bildirim_metni)
         else:
             konum_str = f"{hedef_ilce.upper()}" + (f" - {hedef_mahalle.upper()}" if aranacak_mahalle != "TUMU" else " (Tüm Mahalleler)")
-            telegram_mesaj_gonder(chat_id, f"✅ Harika! Şu anda {konum_str} konumunda herhangi bir İZSU kesintisi görünmüyor.")
+            telegram_mesaj_gonder(chat_id, f"✅ Harika! Şu anda *{konum_str}* konumunda herhangi bir İZSU kesintisi görünmüyor.")
             
     except Exception as e:
         print("Sorgu Hatası:", e)
         telegram_mesaj_gonder(chat_id, "❌ İZSU sitesine bağlanırken bir hata oluştu.")
+
+def telegram_mesaj_isle(chat_id, metin):
+    if metin == "/start":
+        kullanıcı_guncelle_veya_ekle(chat_id, "ALİAĞA", "SİTELER")
+        
+        # Markdown formatında mesaj. /konum komutuna tıklayınca otomatik olarak input alanına düşer.
+        hosgeldin_mesaji = (
+            "👋 *İZSU Takip Botuna Hoş Geldiniz!*\n\n"
+            "✍️ *Kullanım Şekilleri:*\n\n"
+            "1️⃣ *Sadece İlçe Takibi İçin:*\n"
+            "`/konum` yazıp boşluk bırakarak ilçenizi ekleyin.\n"
+            "_(Örnek: /konum aliağa)_\n\n"
+            "2️⃣ *Nokta Atışı Mahalle Takibi İçin:*\n"
+            "`/konum` yazıp boşluk bırakarak ilçe ve mahalle ekleyin.\n"
+            "_(Örnek: /konum aliağa siteler)_\n\n"
+            "🔎 Durumu sorgulamak için: /neresi yazabilirsiniz."
+        )
+        
+        sonuc = telegram_mesaj_gonder(chat_id, hosgeldin_mesaji)
+        if sonuc and "result" in sonuc:
+            msg_id = sonuc["result"]["message_id"]
+            telegram_mesaj_sabitle(chat_id, msg_id)
+    
+    elif metin.startswith("/konum"):
+        parcalar = metin.split(" ")
+        if len(parcalar) == 2:
+            yeni_ilce = parcalar[1].upper()
+            kullanıcı_guncelle_veya_ekle(chat_id, yeni_ilce, "TUMU")
+            telegram_mesaj_gonder(chat_id, f"💾 Başarılı! Takip konumunuz tüm *{yeni_ilce}* geneli olarak ayarlandı.\n\n🔄 Şimdi anlık durum kontrol ediliyor...")
+            tek_seferlik_izsu_kontrol(chat_id, yeni_ilce, "TUMU")
+        elif len(parcalar) >= 3:
+            yeni_ilce = parcalar[1].upper()
+            yeni_mahalle = " ".join(parcalar[2:]).upper()
+            kullanıcı_guncelle_veya_ekle(chat_id, yeni_ilce, yeni_mahalle)
+            telegram_mesaj_gonder(chat_id, f"💾 Başarılı! Takip konumunuz kaydedildi:\n📍 {yeni_ilce} - {yeni_mahalle}\n\n🔄 Şimdi anlık durum kontrol ediliyor...")
+            tek_seferlik_izsu_kontrol(chat_id, yeni_ilce, yeni_mahalle)
+        else:
+            # Eğer kullanıcı sadece /konum yazıp bıraktıysa, yazma alanına düşmesi için yönlendiriyoruz.
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+            payload = {
+                "chat_id": str(chat_id), 
+                "text": "✍️ Lütfen ilçenizi veya ilçe ve mahallenizi yazın:\n\n_Örnek: aliağa siteler_",
+                "parse_mode": "Markdown",
+                "reply_markup": {"force_reply": True, "selective": True}
+            }
+            try: requests.post(url, json=payload, timeout=10)
+            except: pass
+            
+    elif metin == "/neresi":
+        ilce, mah = kullanıcı_oku(chat_id)
+        mah_str = "Tüm Mahalleler" if mah == "TUMU" else mah
+        telegram_mesaj_gonder(chat_id, f"🔎 Şu an takip ettiğiniz konum:\n📍 {ilce} - {mah_str}\n\n🔄 Şimdi anlık durum kontrol ediliyor...")
+        tek_seferlik_izsu_kontrol(chat_id, ilce, mah)
 
 def izsu_otomatik_kontrol_et():
     while True:
@@ -141,7 +213,7 @@ def izsu_otomatik_kontrol_et():
                                     break
                                     
                     if kesintiler:
-                        bildirim_metni = f"💧 İZSU OTOMATİK BİLDİRİM 💧\n\n📍 Konum: {hedef_ilce.upper()}"
+                        bildirim_metni = f"💧 *İZSU OTOMATİK BİLDİRİM* 💧\n\n📍 Konum: {hedef_ilce.upper()}"
                         if aranacak_mahalle != "TUMU": bildirim_metni += f" - {hedef_mahalle.upper()}"
                         bildirim_metni += "\n\n📋 KESİNTİLER:\n\n" + "\n\n──────────────────\n\n".join(kesintiler)
                         telegram_mesaj_gonder(chat_id, bildirim_metni)
@@ -149,54 +221,20 @@ def izsu_otomatik_kontrol_et():
             print("Otomatik kontrol hatası:", e)
         time.sleep(KONTROL_ARALIGI)
 
-def telegram_komut_dinle():
-    son_update_id = 0
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-    
-    while True:
-        try:
-            response = requests.get(url, params={"offset": son_update_id + 1, "timeout": 30}, timeout=35).json()
-            if "result" in response:
-                for update in response["result"]:
-                    son_update_id = update["update_id"]
-                    if "message" in update and "text" in update["message"]:
-                        chat_id = update["message"]["chat"]["id"]
-                        metin = update["message"]["text"].strip()
-                        
-                        if metin == "/start":
-                            kullanıcı_guncelle_veya_ekle(chat_id, "ALİAĞA", "SİTELER")
-                            telegram_mesaj_gonder(chat_id, "👋 İZSU Takip Botuna Hoş Geldiniz!\n\n✍️ Kullanım Şekilleri:\n\n1️⃣ **Sadece İlçe Takibi İçin:**\n`/konum aliağa` yazabilirsiniz. (O ilçedeki tüm arızaları listeler)\n\n2️⃣ **Nokta Atışı Mahalle Takibi İçin:**\n`/konum aliağa siteler` yazabilirsiniz.\n\n🔎 Durumu sorgulamak için: `/neresi` yazabilirsiniz.")
-                        
-                        elif metin.startswith("/konum"):
-                            parcalar = metin.split(" ")
-                            if len(parcalar) == 2:
-                                # Sadece ilçe girildiğinde (Örn: /konum aliağa)
-                                yeni_ilce = parcalar[1].upper()
-                                kullanıcı_guncelle_veya_ekle(chat_id, yeni_ilce, "TUMU")
-                                telegram_mesaj_gonder(chat_id, f"💾 Başarılı! Takip konumunuz tüm **{yeni_ilce}** geneli olarak ayarlandı.\n\n🔄 Şimdi anlık durum kontrol ediliyor...")
-                                tek_seferlik_izsu_kontrol(chat_id, yeni_ilce, "TUMU")
-                            elif len(parcalar) >= 3:
-                                # İlçe + Mahalle girildiğinde
-                                yeni_ilce = parcalar[1].upper()
-                                yeni_mahalle = " ".join(parcalar[2:]).upper()
-                                kullanıcı_guncelle_veya_ekle(chat_id, yeni_ilce, yeni_mahalle)
-                                telegram_mesaj_gonder(chat_id, f"💾 Başarılı! Takip konumunuz kaydedildi:\n📍 {yeni_ilce} - {yeni_mahalle}\n\n🔄 Şimdi anlık durum kontrol ediliyor...")
-                                tek_seferlik_izsu_kontrol(chat_id, yeni_ilce, yeni_mahalle)
-                            else:
-                                telegram_mesaj_gonder(chat_id, "⚠️ Hatalı kullanım!\nDoğrusu: `/konum ilçe` veya `/konum ilçe mahalle`")
-                                
-                        elif metin == "/neresi":
-                            ilce, mah = kullanıcı_oku(chat_id)
-                            mah_str = "Tüm Mahalleler" if mah == "TUMU" else mah
-                            telegram_mesaj_gonder(chat_id, f"🔎 Şu an takip ettiğiniz konum:\n📍 {ilce} - {mah_str}\n\n🔄 Şimdi anlık durum kontrol ediliyor...")
-                            tek_seferlik_izsu_kontrol(chat_id, ilce, mah)
-        except Exception as e:
-            print("Telegram hatası:", e)
-        time.sleep(2)
+def webhook_set():
+    time.sleep(5)
+    base_url = os.environ.get("RENDER_EXTERNAL_URL", "https://izsu-takip-botu.onrender.com")
+    webhook_url = f"{base_url}/webhook"
+    api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook"
+    try:
+        r = requests.post(api_url, json={"url": webhook_url}, timeout=10)
+        print("Telegram Webhook Durumu:", r.json())
+    except Exception as e:
+        print("Webhook Kurulum Hatası:", e)
 
 db_kur()
 threading.Thread(target=izsu_otomatik_kontrol_et, daemon=True).start()
-threading.Thread(target=telegram_komut_dinle, daemon=True).start()
+threading.Thread(target=webhook_set, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
